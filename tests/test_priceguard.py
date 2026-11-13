@@ -1,5 +1,6 @@
 import sys
 import unittest
+import unittest.mock
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -318,6 +319,93 @@ class DashboardTests(unittest.TestCase):
         finally:
             srv.shutdown()
             shop.shutdown()
+
+
+class MarketTests(unittest.TestCase):
+    R = {"EUR": Decimal(1), "USD": Decimal(1), "GBP": Decimal(1), "PLN": Decimal("0.25"), "CZK": Decimal("0.04"),
+         "CNY": Decimal("0.12"), "CHF": Decimal(1)}
+
+    def test_landed_cost_rules(self):
+        from priceguard.markets import make_landed
+        L = lambda src, dest, price, **kw: make_landed(src, dest, self.R, **kw)(Decimal(price))
+        self.assertEqual(L("DE", "DE", 100), Decimal("105.00"))            # same country: price + 5 shipping
+        self.assertEqual(L("NL", "DE", 121), Decimal("128.00"))            # EU: 121 incl. 21% -> 100 net -> +19% + 9 shipping
+        self.assertEqual(L("US", "DE", 100), Decimal("148.75"))            # (100+25 shipping) * 1.19
+        self.assertEqual(L("US", "DE", 100, duty_pct=Decimal(10)), Decimal("163.63"))  # + 10% duty before VAT
+        self.assertEqual(L("GB", "DE", 120), Decimal("148.75"))            # UK VAT removed on export
+        self.assertEqual(L("US", "PL", 100), Decimal("615.00"))            # 125 * 1.23 = 153.75 EUR / 0.25 = PLN
+        self.assertEqual(L("US", "DE", 100, shipping_eur=Decimal(0)), Decimal("119.00"))
+
+    def test_country_of_url_and_rates(self):
+        from priceguard.markets import country_of_url, parse_rates
+        self.assertEqual(country_of_url("https://www.cyberport.de/x"), "DE")
+        self.assertEqual(country_of_url("https://www.bhphotovideo.com/c/product/1"), "US")
+        self.assertEqual(country_of_url("https://shop.example.cz/p"), "CZ")
+        self.assertEqual(country_of_url("https://unknown.example.com/p"), "")
+        self.assertEqual(parse_rates("usd=0.9, PLN=0.2")["USD"], Decimal("0.9"))
+        with self.assertRaises(ValueError):
+            parse_rates("USD=abc")
+
+    def test_target_is_compared_with_the_total_cost(self):
+        p = Product("W1", "X", Decimal(0), "USD", "", "US shop", URL, Decimal("150"), "", landed=lambda x: x * 2, target_currency="EUR")
+        s = Store()
+        self.assertEqual(check_product(p, fetcher({URL: (200, page("80", cur="USD"))}), s, T0, Decimal(5), "pl"), "OK")
+        self.assertEqual(s.pending_alerts(), [])                           # 80 USD -> 160 total, above the target 150
+        check_product(p, fetcher({URL: (200, page("70", cur="USD"))}), s, T1, Decimal(50), "pl")
+        text = s.pending_alerts()[0][1]
+        self.assertIn("w Twoim progu 150 €", text)
+        self.assertIn("Szacowany koszt końcowy: 140 €", text)
+
+    def test_wish_with_markets_links_and_migration(self):
+        import sqlite3, tempfile, os
+        from priceguard.wishlist import add_link, add_wish, list_wishes, wish_products
+        s = Store()
+        wid = add_wish(s, "PS5", [("Cyberport", "https://www.cyberport.de/p/1")], "Konsole", Decimal(450), dest="PL",
+                       markets=["DE", "US", "de"], ship=Decimal(7), duty=Decimal(0))
+        add_link(s, wid, "", "https://www.bhphotovideo.com/c/product/9")
+        w = list_wishes(s)[0]
+        self.assertEqual((w["dest"], w["currency"], w["markets"], w["ship"]), ("PL", "PLN", ["DE", "US"], Decimal(7)))
+        self.assertEqual([c for _, _, c in w["links"]], ["DE", "US"])
+        prods = wish_products(s)
+        self.assertEqual([p.currency for p in prods], ["EUR", "USD"])      # each link in its shop's currency
+        self.assertTrue(all(p.landed for p in prods) and prods[0].target_currency == "PLN")
+        for bad in (dict(dest="XX"), dict(markets=["ZZ"])):
+            with self.assertRaises(ValueError):
+                add_wish(s, "Y", [], **bad)
+        with self.assertRaises(ValueError):
+            add_link(s, 999, "", "https://a.example/p")
+        # an older database (before destinations existed) is upgraded in place
+        path = os.path.join(tempfile.mkdtemp(), "old.db")
+        con = sqlite3.connect(path)
+        con.executescript("CREATE TABLE wishes (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, category TEXT NOT NULL DEFAULT '', "
+                          "currency TEXT NOT NULL DEFAULT 'EUR', target TEXT, ean TEXT NOT NULL DEFAULT '', variant TEXT NOT NULL DEFAULT '');"
+                          "CREATE TABLE links (id INTEGER PRIMARY KEY AUTOINCREMENT, wish_id INTEGER NOT NULL, shop TEXT NOT NULL, url TEXT NOT NULL, UNIQUE (wish_id, url));"
+                          "INSERT INTO wishes (name) VALUES ('old item');")
+        con.commit(); con.close()
+        old = Store(path)
+        self.assertEqual(list_wishes(old)[0]["dest"], "")
+
+    def test_quick_compare_does_not_save_and_sorts_by_total_cost(self):
+        from priceguard import markets
+        from priceguard.web import App
+        shop, base = demo.start_shop({"day": 3})
+        alt = base.replace("127.0.0.1", "localhost")
+        with unittest.mock.patch.dict(markets.EXTRA_HOSTS, {"127.0.0.1": "DE", "localhost": "US"}):
+            app = App(Store(), lambda: Fetcher(delay=0), "pl", Decimal(3), None, clock=lambda: T0)
+            try:
+                out = app.quick({"name": ["Smartfon"], "dest": ["DE"], "markets": ["DE", "US"],
+                                 "links": [f"Shop A | {base}/m/phone-a\nUS shop | {alt}/m/phone-b\nBroken | {base}/m/tv-a"]})
+            finally:
+                shop.shutdown()
+        self.assertLess(out.index("≈ 744.00 €"), out.index("≈ 919.08 €"))  # cheapest total first
+        self.assertIn("TO CHECK: no price found", out)
+        self.assertIn("Zapisz na wishliście", out)
+        self.assertEqual(list_wishes_count(app.store), 0)                  # nothing saved
+
+
+def list_wishes_count(store):
+    from priceguard.wishlist import list_wishes
+    return len(list_wishes(store))
 
 
 class OutboxTests(unittest.TestCase):
