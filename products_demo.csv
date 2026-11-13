@@ -1,0 +1,6 @@
+sku,name,my_price,currency,variant,competitor,url
+W-X2,"Wkrętarka X, zestaw z 2 akumulatorami",209.00,EUR,2 akumulator,Shop A,{base}/a/wkretarka-x
+W-X2,"Wkrętarka X, zestaw z 2 akumulatorami",209.00,EUR,2 akumulator,Shop B,{base}/b/wkretarka-x
+P-77,Piła tarczowa P77,129.00,EUR,P77,Shop A,{base}/a/pila-p77
+S-12,"Szlifierka S12, zestaw z 2 akumulatorami",89.00,EUR,2 akumulator,Shop B,{base}/b/szlifierka-s12
+M-05,Młot udarowy M5,159.00,EUR,M5,Shop A,{base}/a/private/mlot-m5
