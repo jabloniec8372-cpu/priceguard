@@ -246,6 +246,80 @@ class FeatureTests(unittest.TestCase):
         self.assertIn("<polyline", sparkline([Decimal(3), Decimal(2), Decimal(2)]))  # flat/equal values do not crash
 
 
+class DashboardTests(unittest.TestCase):
+    def test_wishlist_validation(self):
+        from priceguard.wishlist import parse_links, parse_money
+        self.assertEqual(parse_links("https://a.example/x\nShop B | http://b.example/y"),
+                         [("a.example", "https://a.example/x"), ("Shop B", "http://b.example/y")])
+        for bad in ("", "javascript:alert(1)", "ftp://x/y", "just text"):
+            with self.assertRaises(ValueError):
+                parse_links(bad)
+        with self.assertRaises(ValueError):
+            parse_links("\n".join(f"https://s{i}.example/p" for i in range(11)))
+        self.assertEqual(parse_money("429,90"), Decimal("429.90"))
+        self.assertIsNone(parse_money(""))
+        for bad in ("abc", "-5", "0"):
+            with self.assertRaises(ValueError):
+                parse_money(bad)
+
+    def test_dashboard_story_shopper_alerts_and_escaping(self):
+        import demo_dashboard
+        sent = []
+        app, shop = demo_dashboard.build(sent)
+        try:
+            page_html = app.render()
+        finally:
+            shop.shutdown()
+        self.assertIn("Konsola PlayStation 5 Slim: Shop A ma teraz 449 €, czyli w Twoim progu 450 €.", sent)
+        self.assertEqual(sum("progu" in m for m in sent), 3)  # phone, PS5, shoes
+        self.assertTrue(all("Twoja cena" not in m for m in sent))  # shopper mode: no "your price"
+        self.assertEqual(page_html.count('class="card hit"'), 3)
+        self.assertIn("TO CHECK: no price found", page_html)
+
+    def test_http_flow_with_token_and_host_checks(self):
+        import threading, urllib.request, urllib.parse, urllib.error
+        from priceguard.web import App, make_server
+        state = {"day": 1}
+        shop, base = demo.start_shop(state)
+        app = App(Store(), lambda: Fetcher(delay=0), "en", Decimal(3), None, clock=lambda: T0)
+        srv = make_server(app, 0)
+        port = srv.server_address[1]
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        root = f"http://127.0.0.1:{port}"
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *a, **k):
+                return None
+        opener = urllib.request.build_opener(NoRedirect)
+
+        def post(path, **data):
+            req = urllib.request.Request(root + path, urllib.parse.urlencode(data).encode(), method="POST")
+            try:
+                return opener.open(req).status
+            except urllib.error.HTTPError as ex:
+                return ex.code
+        try:
+            self.assertEqual(post("/add", name="PS5", links=base + "/m/ps5-a", target="450", currency="EUR", token="wrong"), 403)
+            self.assertEqual(post("/add", name="PS5", links="not a link", currency="EUR", token=app.token), 400)
+            self.assertEqual(post("/add", name="<script>x</script>", links=base + "/m/ps5-a", target="450",
+                                  currency="EUR", token=app.token), 303)
+            self.assertEqual(post("/check", token=app.token), 303)
+            app.join_check()
+            body = urllib.request.urlopen(root + "/").read().decode()
+            self.assertIn("&lt;script&gt;x&lt;/script&gt;", body)
+            self.assertNotIn("<script>x</script>", body)
+            self.assertIn("479.00", body)
+            req = urllib.request.Request(root + "/", headers={"Host": "evil.example"})
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(req)
+            self.assertEqual(cm.exception.code, 403)
+            self.assertEqual(post("/delete", id="1", token=app.token), 303)
+            self.assertNotIn("PS5", urllib.request.urlopen(root + "/").read().decode())
+        finally:
+            srv.shutdown()
+            shop.shutdown()
+
+
 class OutboxTests(unittest.TestCase):
     def test_marks_sent_only_after_success_and_never_resends(self):
         s = Store()
