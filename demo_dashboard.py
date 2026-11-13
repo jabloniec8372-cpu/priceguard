@@ -26,11 +26,14 @@ def build(sent: list[str] | None = None):
     send = sent.append if sent is not None else None
     clock = {"t": datetime(2026, 11, 13, 8, 0, tzinfo=TZ)}
     app = App(store, lambda: Fetcher(delay=0), "pl", Decimal(3), send, clock=lambda: clock["t"])
-    add_wish(store, "Smartfon Nova 12 128GB", [("Shop A", base + "/m/phone-a"), ("Shop B", base + "/m/phone-b")], "Telefony", Decimal(750))
-    add_wish(store, "Konsola PlayStation 5 Slim", [("Shop A", base + "/m/ps5-a"), ("Shop B", base + "/m/ps5-b")], "Konsole", Decimal(450))
-    add_wish(store, "Buty biegowe Aero 3", [("Shop A", base + "/m/shoes-a")], "Buty", Decimal(100))
-    add_wish(store, "Monitor 27 cali QHD", [("Shop A", base + "/m/monitor-a")], "Monitory", Decimal(220))
-    add_wish(store, "Telewizor OLED 55", [("Shop A", base + "/m/tv-a")], "RTV", Decimal(900))
+    # Shop A = a German shop (price in EUR, delivered to Germany), Shop B of the phone = a US shop (price in USD)
+    add_wish(store, "Smartfon Nova 12 128GB", [("Shop A", base + "/m/phone-a", "DE"), ("US shop", base + "/m/phone-b", "US")],
+             "Telefony", Decimal(750), dest="DE", markets=["DE", "PL", "US"], duty=Decimal(0))
+    add_wish(store, "Konsola PlayStation 5 Slim", [("Shop A", base + "/m/ps5-a"), ("Shop B", base + "/m/ps5-b")], "Konsole", Decimal(450),
+             dest="DE", markets=["DE", "PL", "NL"])
+    add_wish(store, "Buty biegowe Aero 3", [("Shop A", base + "/m/shoes-a")], "Buty", Decimal(100), dest="DE", markets=["DE", "PL"])
+    add_wish(store, "Monitor 27 cali QHD", [("Shop A", base + "/m/monitor-a")], "Monitory", Decimal(220), dest="DE", markets=["DE", "CZ", "US"])
+    add_wish(store, "Telewizor OLED 55", [("Shop A", base + "/m/tv-a")], "RTV", Decimal(900), dest="DE", markets=["DE", "AT"])
     for day, hour in ((1, 8), (2, 12), (3, 16)):
         state["day"], clock["t"] = day, datetime(2026, 11, 13, hour, 0, tzinfo=TZ)
         app._run()
