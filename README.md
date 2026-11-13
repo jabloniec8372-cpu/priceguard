@@ -4,7 +4,7 @@ Watches a competitor's prices and stock for a web shop owner, and sends a
 Telegram message when it matters. When it is *not sure*, it says so instead of
 guessing.
 
-![Second read: two Telegram alerts, and three rows that need a human look](docs/demo.svg)
+![Third read: three Telegram alerts, and three rows that need a human look](docs/demo.svg)
 
 ## The problem
 
@@ -15,18 +15,25 @@ day. It costs an hour a day and still misses price drops.
 
 1. **Product list.** The owner keeps a sheet (here a CSV; the same columns work
    in Google Sheets): own SKU, own price, currency, the variant that must match,
-   and the competitor's product URL.
+   the competitor's product URL, and optionally a **target price** and the **EAN**.
 2. **Reads each page** every few hours: price, currency, stock, shipping if the
    page shows it. It uses the structured data shops publish for Google
    (schema.org JSON-LD, then microdata). It never guesses a price from loose page text.
 3. **Compares only like with like.** A page with a different variant
-   ("1 battery" instead of "2 batteries") or another currency is *not* compared.
-   It is shown as `TO CHECK`.
-4. **Keeps the history** in SQLite and writes a status sheet (`status.csv`) plus
-   `price_history.csv`. A failed read never overwrites the last known price; the
-   row keeps it and is marked `TO CHECK: <reason>`.
-5. **Alerts on Telegram** when a price drops by a chosen percentage or a product
-   is back in stock: *"Wkrętarka X, zestaw z 2 akumulatorami. Konkurent Shop A obniżył cenę z 219 € do 199 €. Twoja cena to 209 €."* (pl / de / en)
+   ("1 battery" instead of "2 batteries"), another currency, or **another EAN/GTIN**
+   (same model name, different product) is *not* compared. It is shown as `TO CHECK`.
+   If the page publishes no GTIN, nothing is claimed either way.
+4. **Keeps the history** in SQLite and writes a status sheet (`status.csv`), `price_history.csv`
+   and an **HTML report** (`report.html`: price chart per product, rows to check
+   highlighted). A failed read never overwrites the last known price; the row keeps
+   it and is marked `TO CHECK: <reason>`.
+5. **Alerts on Telegram** (pl / de / en):
+   - a price drop by a chosen percentage:
+     *"Wkrętarka X, zestaw z 2 akumulatorami. Konkurent Shop A obniżył cenę z 199 € do 189 €. Twoja cena to 209 €. To najniższa cena z 3 naszych odczytów."*
+   - a product back in stock,
+   - the price reaching your **target** (fires when it crosses the target, not on every read).
+   "Lowest" is said only about what was actually measured: at least 3 readings, and the
+   new price strictly below all earlier ones. A shop's own "was 299 €" is never trusted.
 6. **Polite by design:** checks `robots.txt` (a URL it disallows is skipped and
    flagged, and an unreadable robots.txt means *skip*), pauses between requests
    to one host, retries 429/5xx a bounded number of times, identifies itself.
@@ -40,8 +47,8 @@ day. It costs an hour a day and still misses price drops.
 Python 3.9+, standard library only. On Windows also run `pip install tzdata`.
 
 ```
-python3 demo.py                         # fake shop on localhost, watched twice
-python3 -m unittest discover -s tests   # 25 tests
+python3 demo.py                         # fake shop on localhost, read three times; writes demo_report.html
+python3 -m unittest discover -s tests   # 34 tests
 ```
 
 Against real pages (every few hours via cron or Windows Task Scheduler):
@@ -51,17 +58,21 @@ export TELEGRAM_BOT_TOKEN=...
 python3 -m priceguard run --products my_products.csv --telegram-chat 123456 --threshold 5 --lang pl
 ```
 
+CSV columns: `sku,name,my_price,currency,variant,competitor,url` and optionally `target_price,ean`
+(older files without the last two keep working).
+
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
-| `priceguard/parse.py` | Price, currency, stock, shipping from JSON-LD / microdata |
+| `priceguard/parse.py` | Price, currency, stock, shipping, GTIN from JSON-LD / microdata |
 | `priceguard/fetch.py` | robots.txt, per-host pause, bounded retries (HTTP injectable) |
 | `priceguard/monitor.py` | One pass: compare like with like, record, queue alerts, deliver |
 | `priceguard/store.py` | SQLite history and alert outbox |
-| `priceguard/sheet.py` | Status sheet and history export |
+| `priceguard/sheet.py` | Status sheet and history export (CSV) |
+| `priceguard/report.py` | HTML report with price charts (no dependencies) |
 | `priceguard/telegram.py` | Telegram Bot API sender |
-| `demo.py` | Local fake shop whose prices change between two reads |
+| `demo.py` | Local fake shop whose prices change between three reads |
 
 ## Honest limits (v1)
 
@@ -72,7 +83,11 @@ python3 -m priceguard run --products my_products.csv --telegram-chat 123456 --th
   service from here (tests use a fake sender).
 - The sheet is a CSV; writing to Google Sheets needs the Sheets API and the
   client's credentials.
-- Pages that need JavaScript to show the price are not rendered.
+- Pages that need JavaScript to show the price are not rendered. Per-size stock
+  of shoes is often hidden in scripts, so size availability works only where the
+  page publishes it in structured data.
+- It finds nothing on its own: it watches the URLs on the list. Discovering products
+  (shop sitemaps, affiliate feeds) would be a separate module.
 - **Check each shop's terms of use before monitoring it.** PriceGuard only reads
   public pages, slowly, and respects `robots.txt`, but that does not replace the
-  shop's terms.
+  shop's terms. Large marketplaces usually forbid automated reading.

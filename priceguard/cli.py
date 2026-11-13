@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from .fetch import Fetcher
 from .models import load_products
 from .monitor import deliver, run_once
+from .report import write_report
 from .sheet import write_history, write_status
 from .store import Store
 from .telegram import make_sender
@@ -38,6 +39,7 @@ def main(argv=None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     write_status(out / "status.csv", products, store)
     write_history(out / "price_history.csv", store)
+    write_report(out / "report.html", products, store)
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if token and args.telegram_chat:

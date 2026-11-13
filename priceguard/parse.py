@@ -12,9 +12,10 @@ from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 from typing import Iterator, Optional
 
-from .models import Reading
+from .models import Reading, _digits
 
 _LD = re.compile(r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', re.S | re.I)
+_GTIN_KEYS = ("gtin13", "gtin", "gtin14", "gtin12", "gtin8")
 _SYMBOLS = {"€": "EUR", "zł": "PLN", "£": "GBP", "$": "USD"}
 
 
@@ -51,6 +52,14 @@ def _available(value) -> Optional[bool]:
     return None
 
 
+def _gtin(source: dict) -> str:
+    for k in _GTIN_KEYS:
+        d = _digits(str(source.get(k) or ""))
+        if d:
+            return d
+    return ""
+
+
 def _from_jsonld(html: str) -> Optional[Reading]:
     for block in _LD.findall(html):
         try:
@@ -73,6 +82,7 @@ def _from_jsonld(html: str) -> Optional[Reading]:
                 available=_available(offer.get("availability")),
                 shipping=parse_price(rate) if rate is not None else None,
                 title=str(node.get("name", "")),
+                gtin=_gtin(node) or _gtin(offer),
             )
     return None
 
@@ -115,6 +125,7 @@ def _from_microdata(html: str) -> Optional[Reading]:
         available=_available(p.props.get("availability")),
         shipping=None,
         title=p.props.get("name", ""),
+        gtin=_gtin(p.props),
     )
 
 

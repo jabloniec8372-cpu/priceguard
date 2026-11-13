@@ -89,6 +89,14 @@ class Store:
         ).fetchone()
         return _row(r) if r else None
 
+    def ok_prices(self, sku: str, url: str) -> list[Decimal]:
+        """Every good price we ever read for this product, oldest first."""
+        rows = self.db.execute(
+            "SELECT price FROM readings WHERE sku=? AND url=? AND status='OK' AND price IS NOT NULL ORDER BY id",
+            (sku, url),
+        ).fetchall()
+        return [Decimal(r[0]) for r in rows]
+
     def history(self) -> list[tuple]:
         return self.db.execute("SELECT sku, url, ts, status, price, currency, available FROM readings ORDER BY id").fetchall()
 

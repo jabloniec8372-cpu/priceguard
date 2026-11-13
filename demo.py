@@ -15,6 +15,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from priceguard.fetch import Fetcher
+from priceguard.report import write_report
 from priceguard.models import load_products
 from priceguard.monitor import deliver, run_once
 from priceguard.sheet import status_rows, HEAD
@@ -24,12 +25,13 @@ HERE = Path(__file__).parent
 TZ = ZoneInfo("Europe/Berlin")
 
 
-def jsonld(title, price, avail="InStock", shipping=None):
+def jsonld(title, price, avail="InStock", shipping=None, gtin=None):
     ship = ""
     if shipping is not None:
         ship = f',"shippingDetails":{{"shippingRate":{{"value":"{shipping}"}}}}'
+    g = f'"gtin13":"{gtin}",' if gtin else ""
     return (f'<html><body><h1>{title}</h1><script type="application/ld+json">'
-            f'{{"@context":"https://schema.org","@type":"Product","name":"{title}",'
+            f'{{"@context":"https://schema.org","@type":"Product","name":"{title}",{g}'
             f'"offers":{{"@type":"Offer","price":"{price}","priceCurrency":"EUR",'
             f'"availability":"https://schema.org/{avail}"{ship}}}}}</script></body></html>')
 
@@ -41,17 +43,20 @@ def microdata(title, price, avail="InStock"):
 
 
 def pages(day: int) -> dict[str, str]:
-    d2 = day == 2
+    d2, d3 = day == 2, day == 3
     return {
-        "/a/wkretarka-x": jsonld("Wkrętarka X, zestaw z 2 akumulatorami", "199.00" if d2 else "219.00", shipping="4.90"),
+        "/a/wkretarka-x": jsonld("Wkrętarka X, zestaw z 2 akumulatorami",
+                                 {1: "219.00", 2: "199.00", 3: "189.00"}[day], shipping="4.90", gtin="5900000000011"),
         "/b/wkretarka-x": microdata("Wkrętarka X, zestaw z 2 akumulatorami", "205,00",
-                                    "InStock" if d2 else "OutOfStock"),
+                                    "OutOfStock" if day == 1 else "InStock"),
         # day 2: the shop redesigned the page, the price is no longer machine-readable
         "/a/pila-p77": '<html><h1>Piła tarczowa P77</h1><p>Cena w koszyku</p></html>' if d2
-                       else jsonld("Piła tarczowa P77", "134.00"),
+                       else jsonld("Piła tarczowa P77", "124.00" if d3 else "134.00"),
         # a different variant (1 battery): comparing it would be wrong
         "/b/szlifierka-s12": jsonld("Szlifierka S12, zestaw z 1 akumulatorem", "69.00"),
         "/a/private/mlot-m5": jsonld("Młot udarowy M5", "149.00"),
+        # same model name, but the page publishes another EAN: a different product, not compared
+        "/b/tv-t55": jsonld("Telewizor T55 4K, 55 cali", "499.00", gtin="5900000000099"),
     }
 
 
@@ -90,7 +95,7 @@ def table(rows) -> str:
     return "\n".join("  ".join(c.ljust(w[i]) for i, c in enumerate(r)) for r in out)
 
 
-def main(lang: str = "pl") -> str:
+def main(lang: str = "pl", report_path: str = "") -> str:
     state = {"day": 1}
     srv, base = start_shop(state)
     try:
@@ -99,7 +104,8 @@ def main(lang: str = "pl") -> str:
         fetcher = Fetcher(delay=0)
         sent: list[str] = []
         out = []
-        for day, when in ((1, datetime(2026, 11, 13, 8, 0, tzinfo=TZ)), (2, datetime(2026, 11, 13, 12, 0, tzinfo=TZ))):
+        for day, when in ((1, datetime(2026, 11, 13, 8, 0, tzinfo=TZ)), (2, datetime(2026, 11, 13, 12, 0, tzinfo=TZ)),
+                          (3, datetime(2026, 11, 13, 16, 0, tzinfo=TZ))):
             state["day"] = day
             run_once(products, fetcher, store, when, Decimal("5"), lang)
             n = deliver(store, sent.append)
@@ -109,10 +115,13 @@ def main(lang: str = "pl") -> str:
             out.append("")
             out.append(table(status_rows(products, store)))
             out.append("")
+        if report_path:
+            write_report(Path(report_path), products, store)
         return "\n".join(out)
     finally:
         srv.shutdown()
 
 
 if __name__ == "__main__":
-    print(main())
+    print(main(report_path="demo_report.html"))
+    print("HTML report: demo_report.html")

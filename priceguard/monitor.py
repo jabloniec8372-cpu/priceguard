@@ -14,14 +14,20 @@ TEXT = {
     "pl": {
         "drop": "{name}. Konkurent {comp} obniżył cenę z {old} do {new}. Twoja cena to {mine}.",
         "stock": "{name}. Konkurent {comp}: produkt znów dostępny (cena {new}). Twoja cena to {mine}.",
+        "target": "{name}. Konkurent {comp}: cena {new} osiągnęła Twój próg {target}. Twoja cena to {mine}.",
+        "lowest": " To najniższa cena z {n} naszych odczytów.",
     },
     "de": {
         "drop": "{name}. Wettbewerber {comp} hat den Preis von {old} auf {new} gesenkt. Dein Preis: {mine}.",
         "stock": "{name}. Wettbewerber {comp}: wieder verfügbar (Preis {new}). Dein Preis: {mine}.",
+        "target": "{name}. Wettbewerber {comp}: Preis {new} hat deine Schwelle {target} erreicht. Dein Preis: {mine}.",
+        "lowest": " Das ist der niedrigste Preis aus {n} Messungen.",
     },
     "en": {
         "drop": "{name}. Competitor {comp} lowered the price from {old} to {new}. Your price is {mine}.",
         "stock": "{name}. Competitor {comp}: back in stock (price {new}). Your price is {mine}.",
+        "target": "{name}. Competitor {comp}: price {new} reached your target {target}. Your price is {mine}.",
+        "lowest": " That is the lowest price in {n} readings.",
     },
 }
 
@@ -61,17 +67,27 @@ def check_product(
         return fail(f"currency {reading.currency} instead of {p.currency}")
     if p.variant and p.variant.casefold() not in reading.title.casefold():
         return fail(f'different variant (page says "{reading.title}")')
+    if p.ean and reading.gtin and reading.gtin != p.ean:
+        return fail(f"different product (EAN {reading.gtin} instead of {p.ean})")
 
     prev = store.last_ok(p.sku, p.url)
+    earlier = store.ok_prices(p.sku, p.url)  # before this reading
     rid = store.record(p.sku, p.url, ts, "OK", reading)
-    if prev is None:
-        return "OK"  # first reading is the baseline, nothing to compare yet
 
     args = dict(name=p.name, comp=p.competitor, new=money(reading.price, p.currency, lang),
                 mine=money(p.my_price, p.currency, lang))
+    if p.target is not None and reading.price <= p.target and (prev is None or prev.price > p.target):
+        store.add_alert(f"{rid}|target", TEXT[lang]["target"].format(target=money(p.target, p.currency, lang), **args))
+    if prev is None:
+        return "OK"  # first reading is the baseline, nothing more to compare yet
+
     if prev.price is not None and reading.price < prev.price and \
             reading.price <= prev.price * (1 - threshold_pct / 100):
-        store.add_alert(f"{rid}|drop", TEXT[lang]["drop"].format(old=money(prev.price, p.currency, lang), **args))
+        text = TEXT[lang]["drop"].format(old=money(prev.price, p.currency, lang), **args)
+        # Say "lowest" only for what we really measured: at least 3 readings, new one strictly below all.
+        if len(earlier) >= 2 and reading.price < min(earlier):
+            text += TEXT[lang]["lowest"].format(n=len(earlier) + 1)
+        store.add_alert(f"{rid}|drop", text)
     if prev.available is False and reading.available is True:
         store.add_alert(f"{rid}|stock", TEXT[lang]["stock"].format(**args))
     return "OK"

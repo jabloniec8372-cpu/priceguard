@@ -9,7 +9,7 @@ from .models import Product
 from .store import Store
 
 HEAD = ["SKU", "Product", "My price", "Competitor", "Competitor price", "Difference",
-        "In stock", "Last good read", "Status"]
+        "In stock", "Last good read", "Status", "Target", "Lowest seen"]
 
 
 def status_rows(products: list[Product], store: Store) -> list[list[str]]:
@@ -17,6 +17,7 @@ def status_rows(products: list[Product], store: Store) -> list[list[str]]:
     for p in products:
         ok, last = store.last_ok(p.sku, p.url), store.last_any(p.sku, p.url)
         price = ok.price if ok else None
+        prices = store.ok_prices(p.sku, p.url)
         rows.append([
             p.sku, p.name, f"{p.my_price:.2f}", p.competitor,
             f"{price:.2f}" if price is not None else "",
@@ -24,6 +25,8 @@ def status_rows(products: list[Product], store: Store) -> list[list[str]]:
             "" if not ok or ok.available is None else ("yes" if ok.available else "no"),
             ok.ts if ok else "",
             last.status if last else "not read yet",
+            f"{p.target:.2f}" if p.target is not None else "",
+            f"{min(prices):.2f}" if prices else "",
         ])
     return rows
 
