@@ -9,7 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import demo
 from priceguard.fetch import Blocked, FetchError, Fetcher
-from priceguard.models import Product
+from priceguard.models import Product, load_products
+from priceguard.report import render, sparkline
 from priceguard.monitor import check_product, deliver, money
 from priceguard.parse import parse_price, parse_reading
 from priceguard.store import Store
@@ -21,8 +22,9 @@ URL = "http://shop.test/p1"
 P = Product("W1", "Wkrętarka X", Decimal("209"), "EUR", "2 akumulator", "Shop A", URL)
 
 
-def page(price="219.00", title="Wkrętarka X, zestaw z 2 akumulatorami", cur="EUR", avail="InStock"):
-    return (f'<script type="application/ld+json">{{"@type":"Product","name":"{title}","offers":'
+def page(price="219.00", title="Wkrętarka X, zestaw z 2 akumulatorami", cur="EUR", avail="InStock", gtin=""):
+    g = f'"gtin13":"{gtin}",' if gtin else ""
+    return (f'<script type="application/ld+json">{{"@type":"Product","name":"{title}",{g}"offers":'
             f'{{"price":"{price}","priceCurrency":"{cur}","availability":"https://schema.org/{avail}"}}}}</script>')
 
 
@@ -167,6 +169,83 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(money(Decimal("199.50"), "PLN", "en"), "199.50 PLN")
 
 
+class FeatureTests(unittest.TestCase):
+    def run_pass(self, store, html, now, product):
+        return check_product(product, fetcher({URL: (200, html)}), store, now, Decimal("5"), "pl")
+
+    def test_gtin_is_read_from_jsonld_and_microdata(self):
+        self.assertEqual(parse_reading(page(gtin="5900000000011")).gtin, "5900000000011")
+        md = '<h1 itemprop="name">Y</h1><span itemprop="price">9</span><meta itemprop="gtin13" content="590 000 000 0028">'
+        self.assertEqual(parse_reading(md).gtin, "5900000000028")
+        self.assertEqual(parse_reading(page()).gtin, "")
+
+    def test_ean_mismatch_is_not_compared_but_missing_gtin_is_not_a_claim(self):
+        p = Product("W1", "Wkrętarka X", Decimal("209"), "EUR", "", "Shop A", URL, ean="5900000000011")
+        s = Store()
+        self.assertIn("different product", self.run_pass(s, page(gtin="5900000000099"), T0, p))
+        self.assertIsNone(s.last_ok(p.sku, URL))
+        self.assertEqual(self.run_pass(s, page(gtin="5900000000011"), T0, p), "OK")
+        self.assertEqual(self.run_pass(s, page(), T1, p), "OK")  # page has no GTIN: nothing to compare
+
+    def test_target_alert_fires_on_crossing_not_on_every_read(self):
+        p = Product("W1", "Wkrętarka X", Decimal("209"), "EUR", "", "Shop A", URL, target=Decimal("195"))
+        s = Store()
+        self.run_pass(s, page("200"), T0, p)
+        self.assertEqual(s.pending_alerts(), [])
+        self.run_pass(s, page("190"), T1, p)
+        self.run_pass(s, page("190"), T1, p)  # still below: no second alert
+        self.assertEqual(sum("próg 195 €" in t for _, t in s.pending_alerts()), 1)
+        self.run_pass(s, page("210"), T1, p)  # back above
+        self.run_pass(s, page("190"), T1, p)  # crosses again
+        self.assertEqual(sum("próg 195 €" in t for _, t in s.pending_alerts()), 2)
+
+    def test_target_hit_on_first_reading_still_alerts(self):
+        p = Product("W1", "Wkrętarka X", Decimal("209"), "EUR", "", "Shop A", URL, target=Decimal("195"))
+        s = Store()
+        self.run_pass(s, page("190"), T0, p)
+        self.assertEqual(len(s.pending_alerts()), 1)
+
+    def test_lowest_note_only_with_enough_history(self):
+        s = Store()
+        self.run_pass(s, page("230"), T0, P)
+        self.run_pass(s, page("210"), T0, P)  # drop, only 2 readings: no claim
+        self.assertNotIn("najniższa", s.pending_alerts()[-1][1])
+        self.run_pass(s, page("190"), T1, P)  # lowest of 3
+        self.assertIn("To najniższa cena z 3 naszych odczytów.", s.pending_alerts()[-1][1])
+
+    def test_lowest_note_not_added_when_an_earlier_price_was_lower(self):
+        s = Store()
+        for price in ("150", "230", "210", "180"):
+            self.run_pass(s, page(price), T0, P)
+        self.assertNotIn("najniższa", s.pending_alerts()[-1][1])
+
+    def test_csv_optional_columns_and_backward_compatibility(self):
+        import tempfile, os
+        d = tempfile.mkdtemp()
+        old = os.path.join(d, "old.csv")
+        open(old, "w", encoding="utf-8").write("sku,name,my_price,currency,variant,competitor,url\nA,X,10,EUR,,S,http://x/1\n")
+        a = load_products(old)[0]
+        self.assertEqual((a.target, a.ean), (None, ""))
+        new = os.path.join(d, "new.csv")
+        open(new, "w", encoding="utf-8").write("sku,name,my_price,currency,variant,competitor,url,target_price,ean\nA,X,10,EUR,,S,http://x/1,\"8,50\",590 000\n")
+        b = load_products(new)[0]
+        self.assertEqual((b.target, b.ean), (Decimal("8.50"), "590000"))
+
+    def test_report_marks_rows_to_check_and_escapes_html(self):
+        evil = Product("E1", "<b>Evil</b>", Decimal("10"), "EUR", "", "S", URL)
+        s = Store()
+        check_product(evil, fetcher({URL: (200, "<p>nothing</p>")}), s, T0, Decimal(5))
+        out = render([evil], s)
+        self.assertIn("&lt;b&gt;Evil&lt;/b&gt;", out)
+        self.assertNotIn("<b>Evil</b>", out)
+        self.assertIn('class="check"', out)
+        self.assertIn("TO CHECK", out)
+
+    def test_sparkline_needs_two_points(self):
+        self.assertIn("not enough data", sparkline([Decimal(1)]))
+        self.assertIn("<polyline", sparkline([Decimal(3), Decimal(2), Decimal(2)]))  # flat/equal values do not crash
+
+
 class OutboxTests(unittest.TestCase):
     def test_marks_sent_only_after_success_and_never_resends(self):
         s = Store()
@@ -201,7 +280,10 @@ class DemoTests(unittest.TestCase):
         out = demo.main("pl")
         self.assertIn("obniżył cenę z 219 € do 199 €", out)
         self.assertIn("znów dostępny", out)
-        self.assertEqual(out.count("Telegram>"), 2)
+        self.assertEqual(out.count("Telegram>"), 5)
+        self.assertIn("osiągnęła Twój próg 195 €", out)
+        self.assertIn("To najniższa cena z 3 naszych odczytów.", out)
+        self.assertIn("different product (EAN", out)
         self.assertIn("blocked by robot", out)
         self.assertIn("different varian", out)
         self.assertIn("no price found", out)
