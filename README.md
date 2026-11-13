@@ -8,19 +8,27 @@ matters. Two ways to use it: a **control panel** for a shopper hunting deals, an
 
 ## Control panel (dashboard)
 
-For a shopper hunting a phone, shoes, a PS5, a monitor or a TV: one local web page.
-Add the item, paste the shop links, set a target price, and the system tracks the prices.
+For a shopper hunting a phone, shoes, a PS5, a monitor or a TV: one local web page with two modes.
 
 ```
-python3 -m priceguard serve --lang pl --interval 120     # then open http://127.0.0.1:8765
-python3 demo_dashboard.py --serve                         # same panel with fake demo data
+python3 -m priceguard serve --lang pl --interval 120 --rates "USD=0.9,PLN=0.23"   # open http://127.0.0.1:8765
+python3 demo_dashboard.py --serve                                                 # same panel with fake demo data
 ```
 
-- add / remove items; several shop links per item; optional EAN and title check
-- per item: best price now, lowest seen, price chart per shop, target reached, rows to check
-- "Check now" button, or automatic re-checks every N minutes (`--interval`)
-- Telegram alerts for drops, back in stock and target reached (set `TELEGRAM_BOT_TOKEN` and `--telegram-chat`)
-- listens on `127.0.0.1` only; forms carry a random token; all text is HTML-escaped
+- **Search now (nothing saved):** pick the product, where it should be delivered, and the markets
+  (PL, DE, NL, CZ, AT, USA, China, UK, Switzerland). Each market comes with a ready list of shops and a
+  search link per shop. Paste the product links you found and get a comparison sorted by **estimated total cost**.
+- **Wish list (saved):** the same choices stay attached to the item (destination, markets, target price, links).
+  The system re-checks the prices every N minutes or on a button, keeps the history and sends Telegram alerts.
+- **Total cost estimate:** price + shipping + VAT/duty by route: same country (shipping only), inside the EU
+  (VAT of the destination country), outside the EU (shipping, optional duty %, import VAT). Exchange rates,
+  shipping and duty are assumptions you can override; it is an orientation, not a shop offer.
+- The target price is compared with the total cost in the destination currency.
+- Per item: best price now, lowest seen, price chart per shop, target reached, rows to check.
+- Alerts for drops, back in stock and target reached (`TELEGRAM_BOT_TOKEN` and `--telegram-chat`).
+- Listens on `127.0.0.1` only; forms carry a random token; all text is HTML-escaped.
+- The shop lists per country are written from general knowledge and are **not verified** against live sites:
+  test each shop in the panel ("OK" or "to check").
 
 ## The problem (shop owner mode)
 
@@ -65,7 +73,7 @@ Python 3.9+, standard library only. On Windows also run `pip install tzdata`.
 ```
 python3 demo.py                         # fake shop on localhost, read three times; writes demo_report.html
 python3 demo_dashboard.py --serve       # the control panel with demo data
-python3 -m unittest discover -s tests   # 37 tests
+python3 -m unittest discover -s tests   # 42 tests
 ```
 
 Against real pages (every few hours via cron or Windows Task Scheduler):
@@ -86,9 +94,10 @@ CSV columns: `sku,name,my_price,currency,variant,competitor,url` and optionally 
 | `priceguard/fetch.py` | robots.txt, per-host pause, bounded retries (HTTP injectable) |
 | `priceguard/monitor.py` | One pass: compare like with like, record, queue alerts, deliver |
 | `priceguard/store.py` | SQLite history, wish list tables and alert outbox |
+| `priceguard/sheet.py` | Status sheet and history export (CSV) |
+| `priceguard/markets.py` | Countries, shop lists per market, VAT/duty/shipping cost estimate |
 | `priceguard/web.py` | The dashboard (local web server, background checks) |
 | `priceguard/wishlist.py` | Shopper's items and shop links (validation, storage) |
-| `priceguard/sheet.py` | Status sheet and history export (CSV) |
 | `priceguard/report.py` | HTML report with price charts (no dependencies) |
 | `priceguard/telegram.py` | Telegram Bot API sender |
 | `demo.py`, `demo_dashboard.py` | Local fake shop whose prices change between three reads; demo of the dashboard |
@@ -106,6 +115,7 @@ CSV columns: `sku,name,my_price,currency,variant,competitor,url` and optionally 
   of shoes is often hidden in scripts, so size availability works only where the
   page publishes it in structured data.
 - The dashboard is a single-user local tool (no login, no hosting). Putting it on a server needs authentication first.
+- The total cost is a rough estimate (default shipping, exchange rates and duty are assumptions; EU customs rules for small parcels change).
 - It finds nothing on its own: it watches the URLs you give it. Discovering products
   (shop sitemaps, affiliate feeds) would be a separate module.
 - **Check each shop's terms of use before monitoring it.** PriceGuard only reads
