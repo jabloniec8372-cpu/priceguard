@@ -2,3 +2,4 @@ __pycache__/
 *.db
 out/
 demo_report.html
+demo_dashboard.html

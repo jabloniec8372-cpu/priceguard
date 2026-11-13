@@ -1,12 +1,28 @@
 # PriceGuard
 
-Watches a competitor's prices and stock for a web shop owner, and sends a
-Telegram message when it matters. When it is *not sure*, it says so instead of
-guessing.
+Watches prices and stock on web shops and sends a Telegram message when it
+matters. Two ways to use it: a **control panel** for a shopper hunting deals, and a
+**competitor monitor** for a shop owner. When it is *not sure*, it says so instead of guessing.
 
 ![Third read: three Telegram alerts, and three rows that need a human look](docs/demo.svg)
 
-## The problem
+## Control panel (dashboard)
+
+For a shopper hunting a phone, shoes, a PS5, a monitor or a TV: one local web page.
+Add the item, paste the shop links, set a target price, and the system tracks the prices.
+
+```
+python3 -m priceguard serve --lang pl --interval 120     # then open http://127.0.0.1:8765
+python3 demo_dashboard.py --serve                         # same panel with fake demo data
+```
+
+- add / remove items; several shop links per item; optional EAN and title check
+- per item: best price now, lowest seen, price chart per shop, target reached, rows to check
+- "Check now" button, or automatic re-checks every N minutes (`--interval`)
+- Telegram alerts for drops, back in stock and target reached (set `TELEGRAM_BOT_TOKEN` and `--telegram-chat`)
+- listens on `127.0.0.1` only; forms carry a random token; all text is HTML-escaped
+
+## The problem (shop owner mode)
 
 A shop owner checks the prices of a few dozen competitor products by hand every
 day. It costs an hour a day and still misses price drops.
@@ -48,7 +64,8 @@ Python 3.9+, standard library only. On Windows also run `pip install tzdata`.
 
 ```
 python3 demo.py                         # fake shop on localhost, read three times; writes demo_report.html
-python3 -m unittest discover -s tests   # 34 tests
+python3 demo_dashboard.py --serve       # the control panel with demo data
+python3 -m unittest discover -s tests   # 37 tests
 ```
 
 Against real pages (every few hours via cron or Windows Task Scheduler):
@@ -68,11 +85,13 @@ CSV columns: `sku,name,my_price,currency,variant,competitor,url` and optionally 
 | `priceguard/parse.py` | Price, currency, stock, shipping, GTIN from JSON-LD / microdata |
 | `priceguard/fetch.py` | robots.txt, per-host pause, bounded retries (HTTP injectable) |
 | `priceguard/monitor.py` | One pass: compare like with like, record, queue alerts, deliver |
-| `priceguard/store.py` | SQLite history and alert outbox |
+| `priceguard/store.py` | SQLite history, wish list tables and alert outbox |
+| `priceguard/web.py` | The dashboard (local web server, background checks) |
+| `priceguard/wishlist.py` | Shopper's items and shop links (validation, storage) |
 | `priceguard/sheet.py` | Status sheet and history export (CSV) |
 | `priceguard/report.py` | HTML report with price charts (no dependencies) |
 | `priceguard/telegram.py` | Telegram Bot API sender |
-| `demo.py` | Local fake shop whose prices change between three reads |
+| `demo.py`, `demo_dashboard.py` | Local fake shop whose prices change between three reads; demo of the dashboard |
 
 ## Honest limits (v1)
 
@@ -86,7 +105,8 @@ CSV columns: `sku,name,my_price,currency,variant,competitor,url` and optionally 
 - Pages that need JavaScript to show the price are not rendered. Per-size stock
   of shoes is often hidden in scripts, so size availability works only where the
   page publishes it in structured data.
-- It finds nothing on its own: it watches the URLs on the list. Discovering products
+- The dashboard is a single-user local tool (no login, no hosting). Putting it on a server needs authentication first.
+- It finds nothing on its own: it watches the URLs you give it. Discovering products
   (shop sitemaps, affiliate feeds) would be a separate module.
 - **Check each shop's terms of use before monitoring it.** PriceGuard only reads
   public pages, slowly, and respects `robots.txt`, but that does not replace the

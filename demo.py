@@ -57,6 +57,14 @@ def pages(day: int) -> dict[str, str]:
         "/a/private/mlot-m5": jsonld("Młot udarowy M5", "149.00"),
         # same model name, but the page publishes another EAN: a different product, not compared
         "/b/tv-t55": jsonld("Telewizor T55 4K, 55 cali", "499.00", gtin="5900000000099"),
+        # pages used by demo_dashboard.py (a shopper's wish list)
+        "/m/phone-a": jsonld("Smartfon Nova 12 128GB", {1: "799.00", 2: "779.00", 3: "739.00"}[day]),
+        "/m/phone-b": jsonld("Smartfon Nova 12 128GB", {1: "789.00", 2: "789.00", 3: "769.00"}[day]),
+        "/m/ps5-a": jsonld("Konsola PlayStation 5 Slim", {1: "479.00", 2: "449.00", 3: "429.00"}[day]),
+        "/m/ps5-b": jsonld("Konsola PlayStation 5 Slim", {1: "469.00", 2: "469.00", 3: "459.00"}[day]),
+        "/m/shoes-a": jsonld("Buty biegowe Aero 3", {1: "129.00", 2: "129.00", 3: "99.00"}[day]),
+        "/m/monitor-a": jsonld("Monitor 27 cali QHD", "249.00"),
+        "/m/tv-a": '<html><h1>Telewizor OLED 55</h1><p>Cena po zalogowaniu</p></html>',
     }
 
 
