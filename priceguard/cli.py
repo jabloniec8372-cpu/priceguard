@@ -22,11 +22,12 @@ def serve(args) -> int:
     import threading
     import time
 
+    from .markets import parse_rates
     from .web import App, make_server
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     send = make_sender(token, args.telegram_chat) if token and args.telegram_chat else None
-    app = App(Store(args.db), lambda: Fetcher(delay=args.delay), args.lang, Decimal(args.threshold), send)
+    app = App(Store(args.db), lambda: Fetcher(delay=args.delay), args.lang, Decimal(args.threshold), send, rates=parse_rates(args.rates))
     if args.interval > 0:
         def loop():
             while True:
@@ -61,6 +62,7 @@ def main(argv=None) -> int:
     w.add_argument("--delay", type=float, default=2.0)
     w.add_argument("--interval", type=int, default=0, help="re-check every N minutes (0 = only when you press the button)")
     w.add_argument("--telegram-chat")
+    w.add_argument("--rates", default="", help='rough exchange rates to EUR, e.g. "USD=0.9,PLN=0.23"')
     args = p.parse_args(argv)
     if args.cmd == "serve":
         return serve(args)

@@ -68,6 +68,13 @@ class Store:
     def __init__(self, path: str = ":memory:"):
         self.db = sqlite3.connect(path, check_same_thread=False)  # the dashboard guards access with a lock
         self.db.executescript(_SCHEMA)
+        # columns added later (older databases are upgraded in place)
+        for table, col, ddl in (("wishes", "dest", "TEXT NOT NULL DEFAULT ''"), ("wishes", "markets", "TEXT NOT NULL DEFAULT ''"),
+                                ("wishes", "ship_eur", "TEXT"), ("wishes", "duty_pct", "TEXT"),
+                                ("links", "country", "TEXT NOT NULL DEFAULT ''")):
+            if col not in {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}:
+                with self.db:
+                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
 
     def record(self, sku: str, url: str, ts: str, status: str, reading: Optional[Reading] = None) -> int:
         r = reading

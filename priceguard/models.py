@@ -4,7 +4,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Optional
+from typing import Callable, Optional
 
 
 @dataclass(frozen=True)
@@ -18,6 +18,8 @@ class Product:
     url: str
     target: Optional[Decimal] = None  # alert when the competitor price is at or below this
     ean: str = ""  # if set and the page publishes a GTIN, they must match
+    landed: Optional[Callable[[Decimal], Decimal]] = None  # shop price -> estimated total cost at the destination
+    target_currency: str = ""  # currency of `target` when `landed` is used (the destination currency)
 
 
 @dataclass

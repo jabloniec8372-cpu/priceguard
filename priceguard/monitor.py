@@ -18,6 +18,7 @@ TEXT = {
         "buy_drop": "{name}: {comp} obniżył cenę z {old} do {new}.",
         "buy_stock": "{name}: {comp} – znów dostępny (cena {new}).",
         "buy_target": "{name}: {comp} ma teraz {new}, czyli w Twoim progu {target}.",
+        "landed": " Szacowany koszt końcowy: {landed}.",
         "lowest": " To najniższa cena z {n} naszych odczytów.",
     },
     "de": {
@@ -27,6 +28,7 @@ TEXT = {
         "buy_drop": "{name}: {comp} hat den Preis von {old} auf {new} gesenkt.",
         "buy_stock": "{name}: {comp} – wieder verfügbar (Preis {new}).",
         "buy_target": "{name}: {comp} hat jetzt {new}, also innerhalb deiner Schwelle {target}.",
+        "landed": " Geschätzte Gesamtkosten: {landed}.",
         "lowest": " Das ist der niedrigste Preis aus {n} Messungen.",
     },
     "en": {
@@ -36,6 +38,7 @@ TEXT = {
         "buy_drop": "{name}: {comp} lowered the price from {old} to {new}.",
         "buy_stock": "{name}: {comp} – back in stock (price {new}).",
         "buy_target": "{name}: {comp} now has {new}, within your target {target}.",
+        "landed": " Estimated total cost: {landed}.",
         "lowest": " That is the lowest price in {n} readings.",
     },
 }
@@ -84,16 +87,19 @@ def check_product(
     rid = store.record(p.sku, p.url, ts, "OK", reading)
 
     pre = "buy_" if p.my_price == 0 else ""  # my_price 0 = a shopper's wish list item, no "your price"
+    val = p.landed or (lambda x: x)  # compare the target against the estimated total cost when we have one
+    tcur = p.target_currency or p.currency
+    extra = TEXT[lang]["landed"].format(landed=money(val(reading.price), tcur, lang)) if p.landed else ""
     args = dict(name=p.name, comp=p.competitor, new=money(reading.price, p.currency, lang),
                 mine=money(p.my_price, p.currency, lang))
-    if p.target is not None and reading.price <= p.target and (prev is None or prev.price > p.target):
-        store.add_alert(f"{rid}|target", TEXT[lang][pre + "target"].format(target=money(p.target, p.currency, lang), **args))
+    if p.target is not None and val(reading.price) <= p.target and (prev is None or val(prev.price) > p.target):
+        store.add_alert(f"{rid}|target", TEXT[lang][pre + "target"].format(target=money(p.target, tcur, lang), **args) + extra)
     if prev is None:
         return "OK"  # first reading is the baseline, nothing more to compare yet
 
     if prev.price is not None and reading.price < prev.price and \
             reading.price <= prev.price * (1 - threshold_pct / 100):
-        text = TEXT[lang][pre + "drop"].format(old=money(prev.price, p.currency, lang), **args)
+        text = TEXT[lang][pre + "drop"].format(old=money(prev.price, p.currency, lang), **args) + extra
         # Say "lowest" only for what we really measured: at least 3 readings, new one strictly below all.
         if len(earlier) >= 2 and reading.price < min(earlier):
             text += TEXT[lang]["lowest"].format(n=len(earlier) + 1)
