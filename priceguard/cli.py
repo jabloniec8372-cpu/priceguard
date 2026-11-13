@@ -1,4 +1,5 @@
-"""python -m priceguard run --products products.csv [--telegram-chat ID]"""
+"""python -m priceguard run --products products.csv [--telegram-chat ID]
+   python -m priceguard serve      (the control panel / dashboard)"""
 from __future__ import annotations
 
 import argparse
@@ -17,6 +18,30 @@ from .store import Store
 from .telegram import make_sender
 
 
+def serve(args) -> int:
+    import threading
+    import time
+
+    from .web import App, make_server
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    send = make_sender(token, args.telegram_chat) if token and args.telegram_chat else None
+    app = App(Store(args.db), lambda: Fetcher(delay=args.delay), args.lang, Decimal(args.threshold), send)
+    if args.interval > 0:
+        def loop():
+            while True:
+                time.sleep(args.interval * 60)
+                app.start_check()
+        threading.Thread(target=loop, daemon=True).start()
+    srv = make_server(app, args.port)
+    print(f"PriceGuard panel: http://127.0.0.1:{args.port}  (Ctrl+C to stop)")
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="priceguard")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -28,7 +53,17 @@ def main(argv=None) -> int:
     r.add_argument("--threshold", default="5", help="alert when price drops by at least this %%")
     r.add_argument("--delay", type=float, default=2.0, help="seconds between requests to one host")
     r.add_argument("--telegram-chat", help="chat id; the bot token is read from $TELEGRAM_BOT_TOKEN")
+    w = sub.add_parser("serve", help="open the control panel (dashboard) in your browser")
+    w.add_argument("--db", default="priceguard.db")
+    w.add_argument("--port", type=int, default=8765)
+    w.add_argument("--lang", choices=["pl", "de", "en"], default="pl")
+    w.add_argument("--threshold", default="5")
+    w.add_argument("--delay", type=float, default=2.0)
+    w.add_argument("--interval", type=int, default=0, help="re-check every N minutes (0 = only when you press the button)")
+    w.add_argument("--telegram-chat")
     args = p.parse_args(argv)
+    if args.cmd == "serve":
+        return serve(args)
 
     products = load_products(args.products)
     store = Store(args.db)

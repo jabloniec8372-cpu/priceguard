@@ -22,6 +22,15 @@ CREATE TABLE IF NOT EXISTS readings (
     price TEXT, currency TEXT, available INTEGER, shipping TEXT, title TEXT
 );
 CREATE INDEX IF NOT EXISTS readings_by_product ON readings (sku, url, id);
+CREATE TABLE IF NOT EXISTS wishes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL, category TEXT NOT NULL DEFAULT '', currency TEXT NOT NULL DEFAULT 'EUR',
+    target TEXT, ean TEXT NOT NULL DEFAULT '', variant TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wish_id INTEGER NOT NULL, shop TEXT NOT NULL, url TEXT NOT NULL, UNIQUE (wish_id, url)
+);
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key TEXT UNIQUE NOT NULL, text TEXT NOT NULL, sent INTEGER NOT NULL DEFAULT 0
@@ -57,7 +66,7 @@ _COLS = "id, ts, status, price, currency, available, shipping, title"
 
 class Store:
     def __init__(self, path: str = ":memory:"):
-        self.db = sqlite3.connect(path)
+        self.db = sqlite3.connect(path, check_same_thread=False)  # the dashboard guards access with a lock
         self.db.executescript(_SCHEMA)
 
     def record(self, sku: str, url: str, ts: str, status: str, reading: Optional[Reading] = None) -> int:
@@ -96,6 +105,10 @@ class Store:
             (sku, url),
         ).fetchall()
         return [Decimal(r[0]) for r in rows]
+
+    def last_checked(self) -> Optional[str]:
+        r = self.db.execute("SELECT MAX(ts) FROM readings").fetchone()
+        return r[0] if r else None
 
     def history(self) -> list[tuple]:
         return self.db.execute("SELECT sku, url, ts, status, price, currency, available FROM readings ORDER BY id").fetchall()
